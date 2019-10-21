@@ -1,12 +1,13 @@
-;;; mill-mode.el --- Interactive support for mill projects
+;;; mill-mode.el --- Interactive support for Mill projects
 ;; -*- lexical-binding- t; -*-
 
 ;;; Commentary:
 ;;;
-;;; Loosely based on sbt-mode.
+;;; Major mode for working with Mill. Loosely based on sbt-mode.
 ;;;
 ;;; Code:
 
+(require 'compile)
 (require 'shell)
 
 (defcustom mill-program-name "mill"
@@ -23,13 +24,40 @@
   '("all" "resolve" "inspect" "show" "shutdown" "path" "plan" "version" "visualize" "visualizePlan" "clean")
   "List of mill commands that can be run without specifying a project.")
 
+(defconst mill-compilation-regexp
+  '(;; Sbt 1.0.x
+    ("^\\[error][[:space:]]\\([/[:word:]]:?[^:[:space:]]+\\):\\([[:digit:]]+\\):\\([[:digit:]]+\\):" 1 2 3 2 1)
+    ;; Sbt 0.13.x
+    ("^\\[error][[:space:]]\\([/[:word:]]:?[^:[:space:]]+\\):\\([[:digit:]]+\\):" 1 2 nil 2 1)
+    ;; https://github.com/Duhemm/sbt-errors-summary
+    ("^\\[error][[:space:]]\\[E[[:digit:]]+][[:space:]]\\([/[:word:]]:?[^:[:space:]]+\\):\\([[:digit:]]+\\):\\([[:digit:]]+\\):$" 1 2 3 2 1)
+    ("^\\[warn][[:space:]]+\\[E[[:digit:]]+][[:space:]]\\([/[:word:]]:?[^:[:space:]]+\\):\\([[:digit:]]+\\):\\([[:digit:]]+\\):$" 1 2 3 1 1)
+    ("^\\[warn][[:space:]]\\([/[:word:]]:?[^:[:space:]]+\\):\\([[:digit:]]+\\):" 1 2 nil 1 1)
+    ("^\\[info][[:space:]]\\([/[:word:]]:?[^:[:space:]]+\\):\\([[:digit:]]+\\):" 1 2 nil 0 1)
+    ;; failing scalatests
+    ("^\\[info][[:space:]]+\\(.*\\) (\\([^:[:space:]]+\\):\\([[:digit:]]+\\))" 2 3 nil 2 1)
+    ("^\\[warn][[:space:]][[:space:]]\\[[[:digit:]]+][[:space:]]\\([/[:word:]]:?[^:[:space:]]+\\):\\([[:digit:]]+\\):\\([[:digit:]]+\\):" 1 2 3 1 1)
+    ))
+
 (defvar-local mill-current-module nil
   "The current Mill module to use when issuing user commands.
   Nil if no project has been selected yet, a String otherwise.")
 
 
+;;; Interactive functions
+
+(defun mill-compile-current-module ()
+  "Compile the current module, displaying the output in the Mill buffer."
+  (interactive)
+  (let ((module (mill-get-or-choose-current-module))
+        (dir (mill-find-root)))
+    (compilation-start (format "cd %s; %s %s.compile" dir mill-program-name module) 'mill-compilation-mode)))
+
+
+;;; Internals
+
 (defun mill-modules ()
-  "Returns as a list of strings the available Mill modules for the currenct project."
+  "Return as a list of strings the Mill modules in the currenct project."
   (set-difference (mill-run-mill-to-list "resolve" "_") mill-top-level-commands :test #'equal))
 
 (defun mill-set-current-module ()
@@ -42,12 +70,6 @@
   "Get the current value of `mill-current-module`, unless it is nil in which case prompt the user to choose a module."
   (or mill-current-module (mill-set-current-module)))
 
-(defun mill-compile-current-module ()
-  "Compile the current module, displaying the output in the Mill buffer."
-  (interactive)
-  (let ((module (mill-get-or-choose-current-module)))
-    (mill-run-mill (format "%s.compile" module))))
-
 (defun mill-run-mill (&rest commands)
   "Run Mill with the given strings COMMANDS, displaying output in a buffer called *mill*projectdir."
   (let* ((project-root (mill-find-root))
@@ -55,7 +77,7 @@
     (with-current-buffer buffer-name
       (erase-buffer)
       (cd project-root)
-      (insert mill-program-name " " command "\n")
+      (insert mill-program-name " " (string-join commands " ") "\n")
       (let ((process (apply 'start-process "mill" buffer-name mill-program-name commands)))
         (display-buffer (current-buffer))
         (require 'shell)
@@ -80,12 +102,16 @@ directory containing a build.sc.
 Returns the directory or nil if not found."
   (locate-dominating-file default-directory "build.sc"))
 
-
 (defun mill-buffer-name ()
   "Return the buffer name, a string, for running Mill."
   (format "%s<%s>"
           mill-buffer-name-base
           (abbreviate-file-name (mill-find-root))))
+
+(define-compilation-mode mill-compilation-mode "Compile current module using mill"
+  (set (make-local-variable 'compilation-error-regexp-alist)
+       mill-compilation-regexp))
+
 
 
 (provide 'mill-mode)
