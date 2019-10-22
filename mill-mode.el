@@ -29,6 +29,12 @@
   (let ((module (mill-get-or-choose-current-module)))
     (mill-mode-run-compile-like (format "%s.compile" module))))
 
+(defun mill-test-current-module ()
+  "Test the current module, displaying the output in the Mill buffer."
+  (interactive)
+  (let ((module (mill-get-or-choose-current-module)))
+    (mill-mode-run-compile-like (format "%s.test" module))))
+
 
 ;;; Internals
 
